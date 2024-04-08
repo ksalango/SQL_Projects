@@ -1,0 +1,367 @@
+USE AirTraffic;
+SELECT * FROM AirTraffic.airports;
+
+-- QUESTION 1
+-- Basic Details about Data
+-- check for NULL values 
+SELECT COUNT(*) as NULL_valcount
+FROM flights
+WHERE id IS NULL; #no NULL values in id field
+
+SELECT COUNT(*) as NUll_valcount
+FROM flights
+WHERE FLightDate IS NULL; #no NULL values in field
+
+
+-- How many flights in 2018 and 2019 seperately
+SELECT YEAR(FlightDate) AS `year`,
+COUNT(id) AS numberofflights
+FROM flights
+WHERE YEAR(FlightDate) IS NOT NULL AND id IS NOT NULL
+GROUP BY year;
+
+/*flights have generally increased from 2018-2019*/
+
+-- in total how many flights were cancelled or departed late over the years
+-- how many distinct values in canceled
+SELECT DISTINCT cancelled
+FROM flights;
+-- assuming 1 means cancelled, no NULL values
+
+SELECT COUNT(id) AS flights_cancelledordelayed
+FROM flights
+WHERE cancelled = 1 OR DepDelay > 0;
+
+-- Show number of flights cancelled by reason for cancellation 
+SELECT COUNT(id) AS flights_cancelled, CancellationReason
+FROM flights
+GROUP BY CancellationReason
+ORDER BY flights_cancelled; 
+/*Most flights cancelled, reason is null, the next reason category for most flights
+cancelled is for weather*/
+
+-- For each month in 2019; total number of flights and % cancelled (across all three airlines)
+
+SELECT COUNT(id) AS total_flights, 
+	MONTH(flightdate) AS month,
+	SUM(cancelled=1)/COUNT(id) * 100 AS percent_cancelledflights	
+FROM flights
+WHERE YEAR(flightdate) = 2019 
+GROUP BY month
+ORDER BY month; 
+/*It seems that the percentage of flights canceled slightly increases from jan to around march/april 
+then decreases to december, while total flights does not seem to follow this pattern, and remains relatively 
+constant in relation to the percentcancelled flights. Just looking at this one year this could suggest 
+cancelation patterns may follow seasonality and in turn revenue would follow this pattern as well, with 
+more revenue increasingly coming in from april - december.
+- Suggest looking into Airline operations management focused on seasonality to see which ariline
+best manages this revenue change. */
+
+SELECT AirlineName, COUNT(id) AS total_flights,
+    MONTH(flightdate) AS month,
+    SUM(cancelled = 1) / COUNT(id) * 100 AS percent_cancelledflights
+FROM flights
+WHERE YEAR(flightdate) = 2019
+GROUP BY AirlineName, MONTH(flightdate)
+ORDER BY AirlineName, month; ## Use same query as above but break it down by airline.
+
+SELECT AirlineName, COUNT(id) AS total_flights,
+    MONTH(flightdate) AS month,
+    SUM(cancelled = 1) / COUNT(id) * 100 AS percent_cancelledflights,
+    AVG(SUM(cancelled =1)/ COUNT(id) *100) OVER (PARTITION BY AirlineName ORDER BY MONTH(flightdate)) AS
+    avg_percent_cancelled ## USE Windows function to calculate avg percent cancelation for each airline across the months.
+FROM flights
+WHERE YEAR(flightdate) = 2019 AND MONTH(flightdate) BETWEEN 1 AND 4 ##limit query to Jan through April,months with highest cancellation
+GROUP BY AirlineName, MONTH(flightdate)
+ORDER BY AirlineName, month; 
+
+/* Southwest has the highest avg percent cancelled during jan-april(Time window where seasonally
+there are the most cancellations overall), followed by American, delta having the lowest avg percent
+cancellations*/
+
+-- check percent calculations for total number of flights and % cancelled (across all three airlines)
+-- Count total flights for each month in 2019
+SELECT
+  COUNT(id) AS total_flights,
+  MONTH(flightdate) AS month
+FROM flights
+WHERE YEAR(flightdate) = 2019
+GROUP BY month
+ORDER BY month;
+
+-- Count canceled flights for each month in 2019
+SELECT
+  COUNT(id) AS canceled_flights,
+  MONTH(flightdate) AS month
+FROM flights
+WHERE YEAR(flightdate) = 2019 AND cancelled = 1
+GROUP BY month
+ORDER BY month;
+
+-- check percentage calculation:
+
+SELECT t1.total_flights, t2.cancelled_flights, 
+t2.cancelled_flights/t1.total_flights *100 AS percent_cancelledflights,
+t1.month
+FROM (SELECT
+  COUNT(id) AS total_flights,
+  MONTH(FlightDate) AS month
+FROM flights
+WHERE YEAR(FlightDate) = 2019
+GROUP BY month
+ORDER BY month) AS t1
+JOIN (SELECT
+  COUNT(id) AS cancelled_flights,
+  MONTH(FlightDate) AS month
+FROM flights
+WHERE YEAR(FlightDate) = 2019 AND cancelled = 1
+GROUP BY month
+ORDER BY month) AS t2
+ON t1.month = t2.month
+ORDER BY t1.month;
+
+-- QUESTION 2
+-- create 2 new tables, one for each year (2018,2019) showing total number of miles traveld
+-- and number of flights broken down by airline
+
+CREATE TABLE airline_2018 AS
+SELECT SUM(Distance) as td2018, COUNT(id) as nflights2018, AirlineName
+FROM flights
+WHERE YEAR(FlightDate) = 2018
+GROUP BY AirlineName;
+
+CREATE TABLE airline_2019 AS
+SELECT SUM(Distance) as td2019, COUNT(id) as nflights2019, AirlineName
+FROM flights
+WHERE YEAR(FlightDate) = 2019
+GROUP BY AirlineName;
+
+-- Use above tables to find YoY percent change in total flights and miles traveled for each airline
+
+SELECT  (a2019.total_distance2019 - a2018.td2018)/a2018.td2018 * 100 AS YoY_percentchange_distance,
+		(a2019.number_of_flights2019 - a2018.nflights2018)/a2018.nflights2018 * 100 AS YoY_percentchange_numberofflights,
+        a2018.AirlineName
+FROM 
+	airline_2018 as a2018
+    JOIN airline_2019 as a2019
+    ON a2018.AirlineName = a2019.AirlineName;
+
+
+/* an increase in YoY percent change in distance and number of flights could indicate growth and 
+increase in the operational activity of an airline. It is hard to give investment guidance based soley on this. As there are
+many other factors. Might be helpful to compare these YoY percent changes with the YoY percent change
+in cancelations to gain further insight: */ 
+
+-- calculate YoY percent change in cancelations/ Airline 
+
+SELECT AirlineName, 
+(
+	(
+    SUM(CASE WHEN YEAR(FlightDate) = 2019 AND cancelled = 1 THEN 1 ELSE 0 END) -
+	SUM(CASE WHEN YEAR(FlightDate) = 2018 AND cancelled =1 THEN 1 ELSE 0 END) 
+	)/NULLIF(SUM(CASE WHEN YEAR(FlightDate) = 2018 AND cancelled =1 THEN 1 ELSE 0 END),0)) * 100 -- accounts for division by zero (but that shouldn't happen) 
+ AS YoY_percentchange_cancellations
+ FROM flights
+ GROUP BY AirlineName;
+ 
+/* When looking at the YoY percent change in distance, flights and cancelation Delta Air Lines has 
+an increased YoY percent change in distance and flights which could indicate operational growth, looking
+at YoY percent change in cancellations we see a large decrease for Delta indicating expansion while minimizing
+disruptions. In comparison to the other Airlines; American had a slight increase in change in YoY percent change
+in distance and total flights, they also had a increase in YoY%change in cancelations. Southwest had a decrease 
+in in YoY percent change in distance and a slight increase in total flights, however a large increase in
+YoY%change in cancellations. 
+
+Soley just based on this information the takeway would be to invest in Delta and possibly invest a little amount
+in American maybe for diversification? But avoid Southwest as the data suggests possible issues such as 
+scheduling problems, operational issues or maintenance problems reflected in the huge increase in cancellations, 
+leading to decreased revenue. However it would be good to investigate other factors. */
+
+-- QUESTION 3
+-- What are the names of the 10 most popular destination airports overall? 
+ 
+ SELECT a.AirportID, a.AirportName,
+ COUNT(*) as flight_count
+ FROM flights as f
+ JOIN airports as a ON f.DestAirportID = a.AirportID 
+ GROUP BY a.AirportID, a.AirportName
+ ORDER BY flight_count DESC
+ LIMIT 10; 
+ 
+ ## using a subquery to aggregate and limit data before join
+
+SELECT a.AirportID, a.AirportName, top_airports.n_flights AS FlightCount
+ FROM airports as a
+ JOIN ( 
+ SELECT DestAirportID, COUNT(*) as n_flights
+ FROM flights
+ GROUP BY DestAirportID
+ ORDER BY COUNT(*)  DESC
+ LIMIT 10) AS top_airports
+ ON a.AirportID = top_airports.DestAirportID
+ GROUP BY  a.AirportName, a.AirportID
+ ORDER BY FlightCount DESC; /*has faster run time, the subquery runs through flight data 
+ and counts flights for airports and limits it to the 10 with highest count and then joins 
+ it to the airport table to find the name*/
+ 
+ -- Find Airline flight counts and ranks them with 1 being highest, to the top 10 airports.
+ WITH  TopAirports AS 
+(
+    SELECT DestAirportID, COUNT(*) AS n_flights
+    FROM flights
+    GROUP BY DestAirportID
+    ORDER BY n_flights DESC
+    LIMIT 10 ##Creates new table within this query "TopAirports", used to find airports with the most flights (top 10)
+) 
+
+SELECT
+    a.AirportID,
+    a.AirportName,
+    f.AirlineName,
+    COUNT(*) AS FlightCount,
+    DENSE_RANK() OVER (PARTITION BY a.AirportID ORDER BY COUNT(*) DESC) AS airport_rank ## Assign rank to each airline based on flight count (1 is the highest) within each airport.
+FROM airports AS a
+JOIN flights AS f ON a.AirportID = f.DestAirportID ## Join flights to airport table to get name
+JOIN TopAirports AS ta ON a.AirportID = ta.DestAirportID ##Join to top airports table to get top airports
+GROUP BY a.AirportID,
+		a.AirportName,
+		f.AirlineName
+ORDER BY
+    a.AirportID, airport_rank, FlightCount DESC;
+ 
+/*Could use this to see if one airline on average has higher flight count to these top 10 
+Airports, it could mean that Airline makes more revenue.*/
+
+-- QUESTION 4  
+ -- 4.1 determine number of unique aircrafts that each airline operated from 2018-2019
+ 
+ SELECT COUNT(Tail_Number) AS unique_aircrafts , AirlineName
+ FROM flights
+GROUP BY AirlineName;
+
+-- 4.2 average distance traveled/aircraft for each of three Airlines. Give idea of total fuel costs/airline. 
+  
+ SELECT  AVG(Distance) as avgdistance, Tail_Number, AirlineName
+ FROM flights
+GROUP BY AirlineName, Tail_Number;  ## query gives average distance traveled by each unique aircraft
+
+ -- find average distance traveled/aircraft grouped by airline and aircraft to distance ratio 
+ -- aircraft to distance ratio as a measure of fleet efficiency, assuming more efficient lower equipment cost
+ 
+SELECT
+    AirlineName,
+    COUNT(DISTINCT Tail_Number) AS NumberOfAircraft,
+    AVG(AvgDistance) AS AvgDistancePerAircraft,
+    COUNT(DISTINCT Tail_Number) / AVG(AvgDistance) AS AircraftToDistanceRatio ##aggregate resluts for each airline
+FROM (
+    SELECT
+	AirlineName,
+	Tail_Number,
+	AVG(Distance) AS AvgDistance
+    FROM flights
+    GROUP BY AirlineName,Tail_Number
+) AS AvgDistancesPerAircraft ##calculate avg. distance/aircraft, group by airline
+GROUP BY
+    AirlineName;
+/* -Aircraft to distance ratio; higher ratio means more distance covered with lower number of aircraft
+-Southwest has a higher ratio as well as the greatest distance travelled overall and lowest avg distance
+per aircraft-->may suggest efficiency in a fleet that covers an overall high total distance with shorter 
+distances covered per individual aircraft
+- southwest might have less equipment cost as it has the lowest number of planes flying shorter distances 
+to achieve an overall higher total distance with the fleet
+-Delta and American simillar with higher avg distance traveled and lower aircraft to distance ratio */
+
+SELECT SUM(Distance) as total_distance, AirlineName
+FROM flights 
+GROUP BY AirlineName
+ORDER BY total_distance DESC; ##query gives total distance traveled by each airline (2018-2019)
+
+/* Southwest has greater overall total distance covered, only considering distance as a factor for fuel cost, 
+southwest would have the greater fuel costs,followed by American and Delta would have the lowest*/
+
+-- QUESTION 5 investigate 3 major Airlines and major airports in terms of on time performance
+-- early departures and arrivals are considered on time
+
+  -- 5.1 Find average departue delay for each time of day across the whole data set. 
+
+SELECT 
+	CASE
+		WHEN HOUR (CRSDepTime) BETWEEN 7 and 11 THEN "1-morning"
+        WHEN HOUR (CRSDepTime) BETWEEN 12 and 16 THEN "2-afternoon"
+        WHEN HOUR (CRSDepTime) BETWEEN 17 and 21 THEN "3-evening"
+        WHEN HOUR (CRSDepTime) BETWEEN 18 and 23 THEN "4-night"
+        ELSE "unknown"
+	END AS "time_of_day",
+    AVG(DepDelay) AS avg_departuredelay
+    FROM flights
+    GROUP BY time_of_day
+    ORDER BY avg_departuredelay;
+    
+    /* longer average departure delay in the evening, shortest departure
+    delay in the morning. Possible reasons could be accumulation of delays
+    throughout the day result in longer evening delays, or perhaps peak travel
+    demand is in the evening.
+    - To go further you could find the Airline flight counts per time of day*/
+    
+    -- 5.2 avg dep. delay by time of day for each airport
+    
+    SELECT OriginAirportID,
+	CASE
+		WHEN HOUR (CRSDepTime) BETWEEN 7 and 11 THEN "1-morning"
+        WHEN HOUR (CRSDepTime) BETWEEN 12 and 16 THEN "2-afternoon"
+        WHEN HOUR (CRSDepTime) BETWEEN 17 and 21 THEN "3-evening"
+        WHEN HOUR (CRSDepTime) BETWEEN 18 and 23 THEN "4-night"
+        ELSE "unknown"
+	END AS "time_of_day",
+    AVG(DepDelay) AS avg_departuredelay
+    FROM flights
+    GROUP BY time_of_day, OriginAirportID
+    ORDER BY avg_departuredelay;
+    
+    -- 5.3/5.4 Limit avg dep.delay analysis to morning delays and airports with flights >= 10,000
+    
+SELECT f.OriginAirportID, AVG(f.DepDelay) AS avg_departure_delay,
+a.AirportName
+FROM flights as f
+JOIN airports as a ON f.OriginAirportId = a.AirportID ## join to airport table to get names of airports.
+WHERE HOUR(CRSDepTime) BETWEEN 7 and 11 ## filter to mornings
+GROUP BY f.OriginAirportID, a.AirportName
+HAVING COUNT(*) >= 10000
+ORDER BY avg_departure_delay DESC
+LIMIT 10; ##gives top 10 airports (with >= 10,000 flights) with the highest average morning delay.
+ 
+/* The cities where the airports are located with the highest morning delays are:
+(in DESC order) 
+San Francisco
+Los Angeles
+Dallas
+Chicago
+Seattle
+Denver
+Dallas
+Houston
+San Diego 
+- could find airline flight count to each of these airports during the morning*/
+
+/*SUMMARY: Based on this analysis considering seasonality and revenue Delta seems to manage
+this the best. In terms of YoY percent change in distance number of flights and cancelation, analysis
+could indicate operational growth for Delta with efficiency, Southwest shows perhaps a change in their
+approach with increase in flights and decrease in distance but large increase in cancellations which could
+not be good for revenue. Looking at equipment and fuel costs from this analysis, Southwest has a possible
+lower equipment cost, but possibly the highest fuel cost. Delta and American have show similar equipment costs, 
+with Delta having the the lowest fuel costs. Further analysis could be done on top airports and delays to evaluate
+which Airlines fly the most to these Airports, and which Airlines effectively manage Delays. Based on this
+anaylsis it would be suggested to invest in Delta Airline stock. 
+*/
+
+
+
+
+ 
+
+
+
+
+
+
+
